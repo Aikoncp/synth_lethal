@@ -1,4 +1,4 @@
-
+enlight_validation <- function(SL_pairs, synthetic_rescue = TRUE, parallel = TRUE, SL_pairs_method = "filtered", tissue = "all"){
 library(rstatix)
 library(tictoc)
 library(tidyverse)
@@ -6,13 +6,21 @@ tic()
 datapath <-
   "C:/Users/aikon/OneDrive/Desktop/TFG/SL/synthLethal/data"
 
+
+pairs <- filter_pairs(SL_pairs)
+
+SL_pairs <- pairs$SL_pairs_filtered
+SR_pairs <- pairs$SR_pairs_filtered
+
+
+
 drug_targets_path <- file.path(datapath, 'drug_targets.csv')
 drug_targets <- read_csv(drug_targets_path) |>
   mutate(genes = str_split(genes, ","))
 
 
-parallel <- TRUE
-SL_pairs_method <- "filtered"
+
+
 
 if (parallel) {
   library(doParallel)
@@ -26,19 +34,20 @@ for (i in 2:nrow(drug_targets)) {
   #First must be fixed because it is two drugs
   drug <- drug_targets$drug[i]
   genes <- drug_targets$genes[i][[1]]
+  targeted_tissue <- drug_targets$tissue[i]
   print(drug)
   print(genes)
   #make list of all matching dataset files and make for loop for all paths
   
   if (i != 22 &
-      i != 23 & i!=6  & i!=7  & i!=8  & i!=9 ) { #VEGFA DOESNT EXIST in the gene_effect, could make it so it considers VEGFA for expression
+      i != 23 & i!=6  & i!=7  & i!=8 & i!=9 & (tissue == "all" | tissue == targeted_tissue)) { #VEGFA DOESNT EXIST in the gene_effect, could make it so it considers VEGFA for expression
     #Tipifarnib has problems with the patient indices 
     trial_scores <-
-      calculate_score(drug, genes, SL_pairs_method, parallel)
+      calculate_score(drug, genes, SL_pairs_method, parallel, synthetic_rescue = TRUE, SL_pairs = SL_pairs, SR_pairs = SR_pairs)
     print(i)
     
     
-    
+    test <- t.test(score ~ Response, data = trial_scores, alternative = "less", var.equal = TRUE)
     
     
     #Plot
@@ -64,18 +73,18 @@ for (i in 2:nrow(drug_targets)) {
       # geom_text(data = means, aes(label = weight, y = weight + 0.08)) +
       ggtitle(
         str_c(
-          "Plot of the dataset ",
-          drug
+          "Plot of the Clinical Trial ",
+          drug, "    p-value = ", round(test$p.value,3)
         )
       ) +
       theme(plot.title = element_text(hjust = 0.5)) +
-      labs(caption = 
-           str_c("Synthetic lethal pairs obtained via the method ",
-           SL_pairs_method)) +
+      # labs(caption = 
+      #      str_c("Synthetic lethal pairs obtained via the method ",
+      #      "Binarize expression")) +
       xlab("Response to treatment") + ylab("Synthetic Lethality Score")
     
     
-    
+    print(plot)
 
     #Tests 
 
@@ -90,7 +99,7 @@ for (i in 2:nrow(drug_targets)) {
     # 
     # trial_scores |>  levene_test(score ~ Response)  #Check equal variances
 
-    test <- t.test(score ~ Response, data = trial_scores, alternative = "less", var.equal = TRUE)
+   
 
 
 
@@ -98,12 +107,15 @@ for (i in 2:nrow(drug_targets)) {
     tests[[drug]] <- test
     plots[[drug]] <- plot
     trials_scores[[drug]] <- trial_scores
+    
   }
 }
 
-if (parallel)
+if (parallel){
   stopCluster(cl)
+}
 
 toc()
 
-#return(plots)
+return(list("tests" = tests, "plots" = plots, "trials_scores" = trials_scores))
+}

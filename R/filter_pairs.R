@@ -8,7 +8,7 @@
 #'
 #' @examples
 filter_pairs <-
-  function(n = 100,
+  function(SL_pairs, n = 100,
            SL_pairs_method = "binarize_expression") {
     
     datapath <-
@@ -19,17 +19,17 @@ filter_pairs <-
       unlist() |>
       unique()
     
-    if (SL_pairs_method == "SynLethDB") {
-      SL_pairs_path <- file.path(datapath, 'Human_SL.csv')
-    } else if (SL_pairs_method == "binarize_expression") {
-      SL_pairs_path <-
-        file.path(datapath, 'SL_pairs_binarize_expression.csv')
-    } else if (SL_pairs_method == "binarize_essentiality") {
-      SL_pairs_path <-
-        file.path(datapath, 'SL_pairs_binarize_essentiality.csv')
-      
-    }
-    SL_pairs_unfiltered <- read_csv(SL_pairs_path, show_col_types = FALSE)
+    # if (SL_pairs_method == "SynLethDB") {
+    #   SL_pairs_path <- file.path(datapath, 'Human_SL.csv')
+    # } else if (SL_pairs_method == "binarize_expression") {
+    #   SL_pairs_path <-
+    #     file.path(datapath, 'SL_pairs_binarize_expression.csv')
+    # } else if (SL_pairs_method == "binarize_essentiality") {
+    #   SL_pairs_path <-
+    #     file.path(datapath, 'SL_pairs_binarize_essentiality.csv')
+    #   
+    # }
+    # SL_pairs <- read_csv(SL_pairs_path, show_col_types = FALSE)
     
 ##This is for if the first column is not targeted gene
     
@@ -46,18 +46,24 @@ filter_pairs <-
     #   filter(!duplicated(paste0(pmax(n1.name, n2.name), pmin(n1.name, n2.name))))
       
 
-    q <- p.adjust(SL_pairs_unfiltered$p_value, method="fdr")
-    
-    SL_pairs_unfiltered <- SL_pairs_unfiltered |> add_column(q_value = q) 
-    
-    
+    # q <- p.adjust(SL_pairs_unfiltered$p_value, method="fdr")
+    # 
+    # SL_pairs_unfiltered <- SL_pairs_unfiltered |> add_column(q_value = q) 
+    # 
+    # 
  
     
-    SL_pairs_filtered <-  SL_pairs_unfiltered |> 
+    SL_pairs_filtered <-  SL_pairs |> dplyr::filter(q_value < 0.05, depletion_q_value < 0.05, phylo_coefficient < 10.5, phylo_coefficient > 0) |>  #USe the same boundary for the phylogenetic coefficient as ISLE
       group_by(gene1) |> 
-      slice_min(q_value, n = n)
-    
+      slice_min(survival_coef, n = n) |>  #The ones with the most negative
+    ungroup()
     write_csv(SL_pairs_filtered, "C:/Users/aikon/OneDrive/Desktop/TFG/SL/synthLethal/data/SL_pairs_filtered.csv")
+    
+    SR_pairs_filtered <-  SL_pairs |> dplyr::filter(SR_DD_q_value < 0.05, SR_DD_depletion_q_value < 0.05) |> 
+      group_by(gene1) |> 
+      slice_max(survival_coef, n = n) |>  #The ones with the most negative 
+    ungroup()
+    write_csv(SR_pairs_filtered, "C:/Users/aikon/OneDrive/Desktop/TFG/SL/synthLethal/data/SR_pairs_filtered.csv")
  
     
     #Possibly add other ways of filtering
@@ -67,7 +73,7 @@ filter_pairs <-
     
     
     #getting only the 25 with less p-value for each gene
-    
+    return(list("SR_pairs_filtered" = SR_pairs_filtered, "SL_pairs_filtered" = SL_pairs_filtered))
     
     
   }

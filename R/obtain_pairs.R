@@ -12,7 +12,8 @@
 obtain_pairs <-
   function(method = "binarize_expression",
            n = "all",
-           parallel = FALSE) {
+           parallel = FALSE,
+           cancer_type = "pan_cancer") {
     library(tidyverse)
     datapath <-
       "C:/Users/aikon/OneDrive/Desktop/TFG/SL/synthLethal/data"
@@ -21,11 +22,14 @@ obtain_pairs <-
       file.path(datapath, 'CRISPR_gene_effect.csv')
     expression_path <- file.path(datapath, 'CCLE_expression.csv')
     
+    model_path <-
+      file.path(datapath, 'Model.csv')
+    model <- read_csv(model_path, show_col_types = FALSE)
     
-    
-    if (!exists("gene_effect")) {
-      gene_effect <- read_csv(essentiality_path)
-      expression <- read_csv(expression_path)
+   
+    if (TRUE) { #!exists("gene_effect") or doesnt have the size it has to have
+      gene_effect <- read_csv(essentiality_path, show_col_types = FALSE)
+      expression <- read_csv(expression_path, show_col_types = FALSE)
       
       cell_lines_1 <- gene_effect$DepMap_ID
       cell_lines_2 <- expression[[1]]
@@ -34,44 +38,53 @@ obtain_pairs <-
       
       
       gene_effect <-
-        gene_effect[gene_effect$DepMap_ID %in% cell_lines, ]
+        gene_effect[gene_effect$DepMap_ID %in% cell_lines,]
       colnames(gene_effect) <- word(colnames(gene_effect))
       gene_effect <- as_tibble(gene_effect)
-      gene_effect <- gene_effect[order(gene_effect$DepMap_ID), ]
-      expression <- expression[expression[[1]] %in% cell_lines, ]
+      gene_effect <- gene_effect[order(gene_effect$DepMap_ID),]
+      expression <- expression[expression[[1]] %in% cell_lines,]
       expression <- expression |> rename(DepMap_ID = ...1)
-      expression <- expression[order(expression$DepMap_ID), ]
+      expression <- expression[order(expression$DepMap_ID),]
       colnames(expression) <- word(colnames(expression))
       expression <- as_tibble(expression)
       
     }
     
-    expression_genes <- colnames(expression)[-1] #Remove the DepMapID
+    if (cancer_type != "pan-cancer"){
+      type_patients <- model |> mutate(OncotreeLineage = tolower(OncotreeLineage)) |>  dplyr::filter(OncotreeLineage == cancer_type) |>  select(ModelID) |> unlist()
+      expression <- expression |> dplyr::filter(DepMap_ID %in% type_patients)
+      gene_effect <- gene_effect |> dplyr::filter(DepMap_ID %in% type_patients)
+    }
+    
+    expression_genes <-
+      colnames(expression)[-1] #Remove the DepMapID
     effect_genes <- colnames(gene_effect)[-1]
     
     n_expression_genes <- ncol(expression)
     
     drug_targets_path <- file.path(datapath, 'drug_targets.csv')
-    targeted_genes <- read_csv(drug_targets_path) |>
+    targeted_genes <- read_csv(drug_targets_path, show_col_types = FALSE) |>
       transmute(genes = str_split(genes, ",")) |>
       unlist() |>
       unique()
     
+    p <- progressor(length(targeted_genes) + 3)
+    p()
     
     
     total_cell_lines <- nrow(gene_effect)
     cat(total_cell_lines, '\n')
     benchmark <- total_cell_lines %/% 3
     
-    if (n == "all") {
-      total_gene_As <- ncol(gene_effect)
-      total_gene_Bs <- ncol(expression)
-      
-    } else {
-      total_gene_As <- n + 1
-      total_gene_Bs <- n + 1
-      
-    }
+    # if (n == "all") {
+    #   total_gene_As <- ncol(gene_effect)
+    #   total_gene_Bs <- ncol(expression)
+    #   
+    # } else {
+    #   total_gene_As <- n + 1
+    #   total_gene_Bs <- n + 1
+    #   
+    # }
     
     
     SL_pairs <-
@@ -79,29 +92,37 @@ obtain_pairs <-
         gene1 = character(),
         gene2 = character(),
         p_value = numeric(),
+        statistic = numeric(),
         depletion_p_value = numeric()
       )
     
     
-    p <- progressor(length(targeted_genes) + 1)
     
     
-    top_thirds <- lst()
-    bottom_thirds <- lst()
-    expression_tops <- lst()
-    expression_bottoms <- lst()
     
+  
     
+    if(cancer_type == "pan-cancer"){
     thirds_path <-
       file.path(datapath, 'thirds.RData')
     
     load(thirds_path) #Get the bottom_thirds and top_thirds
     
+    }
+    
     p()
     if (!exists("bottom_thirds") || !exists("top_thirds")) {
-      for (gene in expression_genes) {   #Guardaho que mai canviara
+      top_thirds <- lst()
+      bottom_thirds <- lst()
+      
+      for (gene in expression_genes) {
+        #Guardaho que mai canviara
         
-        y <- expression |> select(DepMap_ID, {{gene}})
+        y <- expression |> select(DepMap_ID, {
+          {
+            gene
+          }
+        })
         
         bottom_third <-
           y |>  slice_min(order_by = .data[[gene]], prop = 0.33)  #It will get more than the benchmark if the minimum value is the same for more than benchmark cell lines (0) Better than the alternative because otherwise it would be more arbitrary
@@ -116,27 +137,26 @@ obtain_pairs <-
       }
     }
     
-    
+   if (!parallel) {
     if (method == "binarize_expression") {
       for (gene_A in targeted_genes) {
-        
         p()
         
         
         
         if (gene_A %in% effect_genes) {
-          x <- gene_effect |> select(DepMap_ID, {{gene_A}})
+          x <- gene_effect |> select(DepMap_ID, {
+            {
+              gene_A
+            }
+          })
           
           
           if (gene_A %in% colnames(expression)) {
-            
             bottom_third_A <- bottom_thirds[[gene_A]]
           }
           #Only check gene A because it is the gene that has been "removed", which is what a drug would do too (VEGFA included because it is not in gene_effect for some reason)
           for (gene_B in expression_genes) {
-  
-           
-            
             bottom_third <- bottom_thirds[[gene_B]]
             top_third <- top_thirds[[gene_B]]
             
@@ -155,16 +175,16 @@ obtain_pairs <-
               }) |> unlist() |> as.numeric()
             
             #Do the wilcoxon test
-            if(length(top_third$DepMap_ID) > 0) {
+            if (length(top_third$DepMap_ID) > 0) {
               wilcoxon_sl <-
-              wilcox.test(essentiality_bottom,
-                          essentiality_top,
-                          alternative = "greater")$p.value #Check whether essentiality_bottom is greater than essentiality_top (when gene y is missing the cell is more likely to die when gene x is removed)
+                wilcox.test(essentiality_top,
+                            essentiality_bottom,
+                            alternative = "greater") #Check whether essentiality_top is greater than essentiality_bottom (when gene y is missing the cell is more likely to die when gene x is removed, low essentiality means the cell dies)
             
             }
             else {
-              wilcoxon_sl <- NA
-              }
+              wilcoxon_sl <- list("p.value" = NA)
+            }
             #Do the hypergeometric depletion test
             
             if (gene_A %in% colnames(expression)) {
@@ -177,23 +197,26 @@ obtain_pairs <-
               #phyper(Overlap, group2, Total-group2, group1, lower.tail= TRUE) (the depletion test)
               
               depletion_p_value <-
-                phyper(overlap,
-                       length(bottom_third$DepMap_ID),
-                       total_cell_lines - length(bottom_third$DepMap_ID),
-                       length(bottom_third_A$DepMap_ID),
-                       lower.tail = TRUE)
+                phyper(
+                  overlap,
+                  length(bottom_third$DepMap_ID),
+                  total_cell_lines - length(bottom_third$DepMap_ID),
+                  length(bottom_third_A$DepMap_ID),
+                  lower.tail = TRUE
+                )
               
             }
             else {
               depletion_p_value <- 2 #fesho millorrrrrrrrrrrrrrrrrrrrrr
             }
             
-            if (!is.nan(wilcoxon_sl)) {
+            if (!is.nan(wilcoxon_sl$p.value)) {
               SL_pairs <- SL_pairs |>
                 add_row(
                   gene1 = word(gene_A),
                   gene2 = word(gene_B),
-                  p_value = wilcoxon_sl,
+                  p_value = wilcoxon_sl$p.value,
+                  statistic = wilcoxon_sl$statistic,
                   depletion_p_value = depletion_p_value
                 )
             }
@@ -214,7 +237,7 @@ obtain_pairs <-
           gene_A <- colnames(y)[2]
           if (word(gene_A) %in% targeted_genes ||
               word(gene_B) %in% targeted_genes) {
-            y <- y[order(y[[2]], decreasing = FALSE),]
+            y <- y[order(y[[2]], decreasing = FALSE), ]
             bottom_third <- y[1:benchmark, 1]
             top_third <-
               y[(total_cell_lines - benchmark + 1):total_cell_lines, 1]
@@ -276,7 +299,7 @@ obtain_pairs <-
     }
     
     
-    
+   }
     
     
     
@@ -288,32 +311,33 @@ obtain_pairs <-
             .packages = c("tidyverse", "stats"),
             .combine = rbind
           ) %dopar% {
-            
             p()
+            
+            SL_pairs_i <-
+              tibble(
+                gene1 = character(),
+                gene2 = character(),
+                p_value = numeric(),
+                depletion_p_value = numeric()
+              )
             
             gene_A <- targeted_genes[i]
             
             if (gene_A %in% effect_genes) {
-              x <- gene_effect |> select(DepMap_ID, {{gene_A}})
+              x <- gene_effect |> select(DepMap_ID, {
+                {
+                  gene_A
+                }
+              })
               
               
               if (gene_A %in% colnames(expression)) {
-                z <- expression |> select(DepMap_ID, {
-                  {
-                    gene_A
-                  }
-                })
-                bottom_third_A <-
-                  z |>  slice_min(order_by = .data[[gene_A]], n = benchmark)
+                bottom_third_A <- bottom_thirds[[gene_A]]
               }
+              #Only check gene A because it is the gene that has been "removed", which is what a drug would do too (VEGFA included because it is not in gene_effect for some reason)
               for (gene_B in expression_genes) {
-                
-                y <- expression |> select(DepMap_ID, {{gene_B}})
-                
-                bottom_third <-
-                  y |>  slice_min(order_by = .data[[gene_B]], n = benchmark)
-                top_third <-
-                  y |>  slice_max(order_by = .data[[gene_B]], n = benchmark)
+                bottom_third <- bottom_thirds[[gene_B]]
+                top_third <- top_thirds[[gene_B]]
                 
                 
                 essentiality_bottom <-
@@ -330,12 +354,16 @@ obtain_pairs <-
                   }) |> unlist() |> as.numeric()
                 
                 #Do the wilcoxon test
-                wilcoxon_sl <-
-                  wilcox.test(essentiality_bottom,
-                              essentiality_top,
-                              alternative = "greater")$p.value #Check whether essentiality_bottom is greater than essentiality_top (when gene y is missing the cell is more likely to die when gene x is removed)
-                
-                
+                if (length(top_third$DepMap_ID) > 0) {
+                  wilcoxon_sl <-
+                    wilcox.test(essentiality_bottom,
+                                essentiality_top,
+                                alternative = "greater")$p.value #Check whether essentiality_bottom is greater than essentiality_top (when gene y is missing the cell is more likely to die when gene x is removed)
+                  
+                }
+                else {
+                  wilcoxon_sl <- NA
+                }
                 #Do the hypergeometric depletion test
                 
                 if (gene_A %in% colnames(expression)) {
@@ -344,12 +372,17 @@ obtain_pairs <-
                       bottom_third$DepMap_ID,
                       bottom_third_A$DepMap_ID
                     ))
+                  
+                  #phyper(Overlap, group2, Total-group2, group1, lower.tail= TRUE) (the depletion test)
+                  
                   depletion_p_value <-
-                    phyper(overlap,
-                           benchmark,
-                           total_cell_lines - benchmark,
-                           benchmark,
-                           lower.tail = TRUE)
+                    phyper(
+                      overlap,
+                      length(bottom_third$DepMap_ID),
+                      total_cell_lines - length(bottom_third$DepMap_ID),
+                      length(bottom_third_A$DepMap_ID),
+                      lower.tail = TRUE
+                    )
                   
                 }
                 else {
@@ -357,7 +390,7 @@ obtain_pairs <-
                 }
                 
                 if (!is.nan(wilcoxon_sl)) {
-                  SL_pairs_i <- SL_pairs |>
+                  SL_pairs_i <- SL_pairs_i |>
                     add_row(
                       gene1 = word(gene_A),
                       gene2 = word(gene_B),
@@ -366,17 +399,17 @@ obtain_pairs <-
                     )
                 }
                 
-                
               }
+              SL_pairs_i
             }
-            SL_pairs_i
+            
           }
-        
       }
     }
     
+    
     SL_pairs <-
-      SL_pairs[order(SL_pairs$p_value, decreasing = FALSE),]
+      SL_pairs[order(SL_pairs$p_value, decreasing = FALSE), ]
     
     q_value <- p.adjust(SL_pairs$p_value, method = "fdr")
     
@@ -384,9 +417,10 @@ obtain_pairs <-
       SL_pairs |> add_column(q_value = q_value)
     
     SL_pairs <-
-      SL_pairs |> add_column(SR_DD_p_value = 1 - SL_pairs$p_value)
+      SL_pairs |> add_column(SR_DD_p_value = 1 - SL_pairs$p_value)   #No estic segur que aixo estigui be
     
-    SR_DD_q_value <- p.adjust(SL_pairs$SR_DD_p_value, method = "fdr")
+    SR_DD_q_value <-
+      p.adjust(SL_pairs$SR_DD_p_value, method = "fdr")
     
     SL_pairs <-
       SL_pairs |> add_column(SR_DD_q_value = SR_DD_q_value)
@@ -399,9 +433,10 @@ obtain_pairs <-
       SL_pairs |> add_column(depletion_q_value = depletion_q_value)
     
     SL_pairs <-
-      SL_pairs |> add_column(SR_DD_depletion_p_value = 1 - depletion_p_value)
+      SL_pairs |> add_column(SR_DD_depletion_p_value = 1 - SL_pairs$depletion_p_value)
     
-    SR_DD_depletion_q_value <- p.adjust(SL_pairs$SR_DD_depletion_p_value, method = "fdr")
+    SR_DD_depletion_q_value <-
+      p.adjust(SL_pairs$SR_DD_depletion_p_value, method = "fdr")
     
     SL_pairs <-
       SL_pairs |> add_column(SR_DD_depletion_q_value = SR_DD_depletion_q_value)
